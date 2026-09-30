@@ -51,6 +51,14 @@ describe('countRemainingDays', () => {
 });
 
 describe('calculateBudget', () => {
+  it('주기 시작일 지출은 포함하고 이전 주기와 미래 지출은 제외한다', () => {
+    const result = calculateBudget(createInput({ expenses: [
+      { id: 'start', amount: 1000, category: 'other', occurredOn: '2026-09-25' },
+      { id: 'before', amount: 2000, category: 'other', occurredOn: '2026-09-24' },
+      { id: 'future', amount: 3000, category: 'other', occurredOn: '2026-09-30' },
+    ] }));
+    expect(result.spentAmount).toBe(1000);
+  });
   it('월급에서 활성 고정지출, 저축액, 현재 주기의 지출을 뺀 뒤 일 예산을 계산한다', () => {
     expect(calculateBudget(createInput())).toEqual({
       incomeAmount: 3_000_000,

@@ -6,9 +6,9 @@ import type {
   SalaryProfile,
   SavingsGoal,
 } from '../models';
+import { toUtcTimestamp } from '../date';
 
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1_000;
-const DATE_ONLY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 export interface BudgetCalculationInput {
   salary: SalaryProfile;
@@ -27,30 +27,6 @@ export interface BudgetCalculationResult {
   deficitAmount: number;
   remainingDays: number;
   dailyAvailableAmount: number;
-}
-
-function toUtcTimestamp(value: DateOnly): number {
-  const match = DATE_ONLY_PATTERN.exec(value);
-
-  if (match == null) {
-    throw new RangeError(`날짜는 YYYY-MM-DD 형식이어야 합니다: ${value}`);
-  }
-
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  const timestamp = Date.UTC(year, month - 1, day);
-  const date = new Date(timestamp);
-
-  if (
-    date.getUTCFullYear() !== year ||
-    date.getUTCMonth() !== month - 1 ||
-    date.getUTCDate() !== day
-  ) {
-    throw new RangeError(`유효하지 않은 날짜입니다: ${value}`);
-  }
-
-  return timestamp;
 }
 
 function assertNonNegativeInteger(value: number, fieldName: string): void {
