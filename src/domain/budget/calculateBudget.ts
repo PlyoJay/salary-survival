@@ -31,15 +31,19 @@ export interface BudgetCalculationResult {
 
 function assertNonNegativeInteger(value: number, fieldName: string): void {
   if (!Number.isSafeInteger(value) || value < 0) {
-    throw new RangeError(`${fieldName}은 0 이상의 정수여야 합니다.`);
+    throw new RangeError(`${fieldName}은 0 이상의 안전한 정수여야 합니다.`);
   }
 }
 
+function addAmount(sum: number, amount: number, fieldName: string): number {
+  assertNonNegativeInteger(amount, fieldName);
+  const next = sum + amount;
+  assertNonNegativeInteger(next, `${fieldName} 합계`);
+  return next;
+}
+
 function sumAmounts(items: ReadonlyArray<{ amount: number }>, fieldName: string): number {
-  return items.reduce((sum, item) => {
-    assertNonNegativeInteger(item.amount, fieldName);
-    return sum + item.amount;
-  }, 0);
+  return items.reduce((sum, item) => addAmount(sum, item.amount, fieldName), 0);
 }
 
 export function countRemainingDays(today: DateOnly, nextPayday: DateOnly): number {
@@ -73,13 +77,16 @@ export function calculateBudget(input: BudgetCalculationInput): BudgetCalculatio
   });
 
   const fixedExpenseAmount = sumAmounts(activeFixedExpenses, '고정지출');
-  const savingsAmount = activeSavingsGoals.reduce((sum, goal) => {
-    assertNonNegativeInteger(goal.monthlyContributionAmount, '월 저축액');
-    return sum + goal.monthlyContributionAmount;
-  }, 0);
+  const savingsAmount = activeSavingsGoals.reduce(
+    (sum, goal) => addAmount(sum, goal.monthlyContributionAmount, '월 저축액'),
+    0,
+  );
   const spentAmount = sumAmounts(cycleExpenses, '지출');
-  const remainingAmount =
-    salary.monthlyNetAmount - fixedExpenseAmount - savingsAmount - spentAmount;
+  const totalDeductions = [fixedExpenseAmount, savingsAmount, spentAmount].reduce(
+    (sum, amount) => addAmount(sum, amount, '예산 차감액'),
+    0,
+  );
+  const remainingAmount = salary.monthlyNetAmount - totalDeductions;
 
   return {
     incomeAmount: salary.monthlyNetAmount,
