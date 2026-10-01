@@ -1,20 +1,28 @@
 import type { BudgetData, Expense, FixedExpense, SalaryProfile, SavingsGoal } from '../domain/models';
 import { assertBudgetData } from '../domain/validation';
-import type { BudgetRepository } from '../repositories/BudgetRepository';
+import { BudgetDataLoadError, type BudgetRepository } from '../repositories/BudgetRepository';
 
 type Collection = 'expenses' | 'fixedExpenses' | 'savingsGoals';
 type CollectionItem<K extends Collection> = BudgetData[K][number];
+type LoadErrorKind = 'storage' | 'data';
 
 export interface BudgetState {
   data: BudgetData | null;
   loading: boolean;
   saving: boolean;
   loadError: string | null;
+  loadErrorKind: LoadErrorKind | null;
 }
 
 // 작은 영속화 조정자: 저장 성공 후 구독자에게 알리고, 연속 변경은 순서대로 처리합니다.
 export class BudgetStore {
-  private state: BudgetState = { data: null, loading: true, saving: false, loadError: null };
+  private state: BudgetState = {
+    data: null,
+    loading: true,
+    saving: false,
+    loadError: null,
+    loadErrorKind: null,
+  };
   private listeners = new Set<() => void>();
   private initialization?: Promise<void>;
   private queue: Promise<void> = Promise.resolve();
@@ -35,17 +43,49 @@ export class BudgetStore {
   initialize = (): Promise<void> => {
     this.initialization ??= this.repository.get().then(data => {
       if (data) assertBudgetData(data);
-      this.publish({ data, loading: false, loadError: null });
-    }).catch(() => {
-      this.publish({ loading: false, loadError: '저장된 데이터를 불러오지 못했어요. 저장 공간 접근을 확인한 뒤 다시 시도해 주세요.' });
+      this.publish({ data, loading: false, loadError: null, loadErrorKind: null });
+    }).catch(cause => {
+      const dataError = cause instanceof BudgetDataLoadError || cause instanceof RangeError;
+      this.publish({
+        loading: false,
+        loadError: dataError && cause instanceof Error
+          ? cause.message
+          : '저장된 데이터를 불러오지 못했어요. 저장 공간 접근을 확인한 뒤 다시 시도해 주세요.',
+        loadErrorKind: dataError ? 'data' : 'storage',
+      });
     });
     return this.initialization;
   };
 
   retryLoad = (): Promise<void> => {
     this.initialization = undefined;
-    this.publish({ loading: true, loadError: null });
+    this.publish({ loading: true, loadError: null, loadErrorKind: null });
     return this.initialize();
+  };
+
+  discardUnreadableData = async (): Promise<void> => {
+    if (this.state.loadErrorKind !== 'data') {
+      throw new Error('삭제할 수 없는 상태예요. 먼저 다시 불러와 주세요.');
+    }
+
+    this.publish({ saving: true });
+    try {
+      await this.repository.clear();
+      this.initialization = Promise.resolve();
+      this.publish({
+        data: null,
+        loading: false,
+        saving: false,
+        loadError: null,
+        loadErrorKind: null,
+      });
+    } catch {
+      this.publish({
+        saving: false,
+        loadError: '저장 데이터를 삭제하지 못했어요. 저장 공간 접근을 확인한 뒤 다시 시도해 주세요.',
+        loadErrorKind: 'storage',
+      });
+    }
   };
 
   private commit(transform: (data: BudgetData | null) => BudgetData | null): Promise<void> {
