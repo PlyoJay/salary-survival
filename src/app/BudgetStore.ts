@@ -42,13 +42,22 @@ export class BudgetStore {
 
   initialize = (): Promise<void> => {
     this.initialization ??= this.repository.get().then(data => {
-      if (data) assertBudgetData(data);
+      if (data) {
+        try {
+          assertBudgetData(data);
+        } catch {
+          throw new BudgetDataLoadError(
+            'corrupted',
+            '저장된 예산 데이터 형식이 올바르지 않아요. 다시 불러오거나 저장 데이터를 삭제하고 새로 시작해 주세요.',
+          );
+        }
+      }
       this.publish({ data, loading: false, loadError: null, loadErrorKind: null });
     }).catch(cause => {
-      const dataError = cause instanceof BudgetDataLoadError || cause instanceof RangeError;
+      const dataError = cause instanceof BudgetDataLoadError;
       this.publish({
         loading: false,
-        loadError: dataError && cause instanceof Error
+        loadError: dataError
           ? cause.message
           : '저장된 데이터를 불러오지 못했어요. 저장 공간 접근을 확인한 뒤 다시 시도해 주세요.',
         loadErrorKind: dataError ? 'data' : 'storage',
