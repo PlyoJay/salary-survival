@@ -1,4 +1,5 @@
 import { Button } from '@toss/tds-mobile';
+import { useState } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 
 import { ExpensesPage } from '../pages/ExpensesPage';
@@ -16,17 +17,35 @@ export function App() {
 
 function BudgetRoutes() {
   const { loading, loadError, loadErrorKind, saving, actions, data } = useBudget();
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+
   if (loading) return <div className="page empty-state" role="status">예산 정보를 불러오고 있어요…</div>;
   if (loadError) return <div className="page empty-state">
     <p role="alert">{loadError}</p>
-    <Button disabled={saving} onClick={() => void actions.retryLoad()}>다시 불러오기</Button>
-    {loadErrorKind === 'data' && <Button
+    <Button disabled={saving} onClick={() => {
+      setConfirmDiscard(false);
+      void actions.retryLoad();
+    }}>
+      다시 불러오기
+    </Button>
+    {loadErrorKind === 'data' && (confirmDiscard ? <>
+      <p>저장된 예산과 지출 기록이 모두 삭제돼요. 이 작업은 되돌릴 수 없어요.</p>
+      <Button
+        color="danger"
+        disabled={saving}
+        onClick={() => void actions.discardUnreadableData()}
+      >
+        저장 데이터 삭제
+      </Button>
+      <Button variant="weak" disabled={saving} onClick={() => setConfirmDiscard(false)}>취소</Button>
+    </> : <Button
       color="danger"
+      variant="weak"
       disabled={saving}
-      onClick={() => void actions.discardUnreadableData()}
+      onClick={() => setConfirmDiscard(true)}
     >
       저장 데이터 삭제하고 새로 시작
-    </Button>}
+    </Button>)}
   </div>;
   return (
     <Routes>
