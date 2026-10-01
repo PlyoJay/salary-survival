@@ -180,4 +180,61 @@ describe('BudgetStore 실제 데이터 흐름', () => {
     expect(store.getSnapshot().loadError).toBeTruthy();
     expect(store.getSnapshot().loadErrorKind).toBe('data');
   });
+  it('합계 오버플로 입력은 저장하지 않고 기존 데이터와 이후 저장을 보존한다', async () => {
+    const repository = createRepository();
+    const store = new BudgetStore(repository);
+    await store.setup(salary);
+    await store.saveFixedExpense({ ...fixed, amount: Number.MAX_SAFE_INTEGER });
+    const before = store.getSnapshot().data;
+    const save = vi.spyOn(repository, 'save');
+    await expect(store.saveSavingsGoal({ ...goal, monthlyContributionAmount: 1 })).rejects.toThrow(RangeError);
+    expect(save).not.toHaveBeenCalled();
+    expect(store.getSnapshot().data).toBe(before);
+    expect(await repository.get()).toEqual(before);
+    expect(store.getSnapshot().saving).toBe(false);
+    await store.saveFixedExpense({ ...fixed, amount: 100 });
+    expect(store.getSnapshot().data?.fixedExpenses[0]?.amount).toBe(100);
+  });
+  it('합계 오버플로 저장 데이터는 계산 화면 대신 로드 오류로 안내하고 덮어쓰지 않는다', async () => {
+    const repository = createRepository();
+    const data = { salary, fixedExpenses: [{ ...fixed, amount: Number.MAX_SAFE_INTEGER }], savingsGoals: [{ ...goal, monthlyContributionAmount: 1 }], expenses: [] };
+    await repository.save(data);
+    const store = new BudgetStore(repository);
+    await store.initialize();
+    expect(store.getSnapshot().loadErrorKind).toBe('data');
+    await expect(store.setup(salary)).rejects.toThrow();
+    expect(await repository.get()).toEqual(data);
+  });
+  it('읽을 수 없는 데이터의 삭제 실패는 오류 상태와 원본을 유지하고 재시도할 수 있다', async () => {
+    const values = new Map([['test', '{broken']]);
+    const removeItem = vi.fn((key: string) => { values.delete(key); }).mockImplementationOnce(() => { throw new Error('denied'); });
+    const store = new BudgetStore(new LocalStorageBudgetRepository({
+      getItem: key => values.get(key) ?? null, setItem: (key, value) => { values.set(key, value); }, removeItem,
+    }, 'test'));
+    await store.initialize();
+    await store.discardUnreadableData();
+    expect(values.get('test')).toBe('{broken');
+    expect(store.getSnapshot().loadError).toContain('삭제하지 못했어요');
+    expect(store.getSnapshot().saving).toBe(false);
+    await expect(store.setup(salary)).rejects.toThrow();
+    await store.retryLoad();
+    await store.discardUnreadableData();
+    expect(values.has('test')).toBe(false);
+    expect(store.getSnapshot()).toMatchObject({ data: null, loadError: null, loadErrorKind: null, loading: false });
+    await store.setup(salary);
+    expect(store.getSnapshot().data?.salary).toEqual(salary);
+  });
+  it('지원하지 않는 버전도 자동 덮어쓰기 없이 다시 불러오기로 정상 데이터를 복원한다', async () => {
+    const get = vi.fn<BudgetRepository['get']>()
+      .mockRejectedValueOnce(new BudgetDataLoadError('unsupported-version', '지원하지 않는 버전'))
+      .mockResolvedValue({ salary, fixedExpenses: [], savingsGoals: [], expenses: [] });
+    const save = vi.fn();
+    const store = new BudgetStore({ get, save, clear: vi.fn() });
+    await store.initialize();
+    await expect(store.setup(salary)).rejects.toThrow('지원하지 않는 버전');
+    expect(save).not.toHaveBeenCalled();
+    await store.retryLoad();
+    expect(store.getSnapshot().data?.salary).toEqual(salary);
+    expect(store.getSnapshot().loadError).toBeNull();
+  });
 });

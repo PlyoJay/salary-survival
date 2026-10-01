@@ -155,4 +155,28 @@ describe('calculateBudget', () => {
       expenses: [],
     }))).toThrow(RangeError);
   });
+  it('월 저축 합계와 현재 주기 지출 합계의 오버플로를 거부한다', () => {
+    expect(() => calculateBudget(createInput({
+      fixedExpenses: [], expenses: [],
+      savingsGoals: [Number.MAX_SAFE_INTEGER, 1].map((amount, index) => ({
+        id: String(index), name: '저축', targetAmount: 0, currentAmount: 0,
+        monthlyContributionAmount: amount, isActive: true,
+      })),
+    }))).toThrow(RangeError);
+    expect(() => calculateBudget(createInput({
+      fixedExpenses: [], savingsGoals: [],
+      expenses: [Number.MAX_SAFE_INTEGER, 1].map((amount, index) => ({
+        id: String(index), amount, category: 'food', occurredOn: '2026-09-29',
+      })),
+    }))).toThrow(RangeError);
+  });
+  it('안전 정수 상한 자체는 정상 계산한다', () => {
+    const result = calculateBudget(createInput({
+      salary: { monthlyNetAmount: Number.MAX_SAFE_INTEGER, payday: 25 },
+      fixedExpenses: [{ id: 'max', name: '상한', amount: Number.MAX_SAFE_INTEGER, dueDay: 1, isActive: true }],
+      savingsGoals: [], expenses: [],
+    }));
+    expect(result.remainingAmount).toBe(0);
+    expect(result.dailyAvailableAmount).toBe(0);
+  });
 });

@@ -1,5 +1,8 @@
 import type { BudgetData, Expense, FixedExpense, SalaryProfile, SavingsGoal } from '../domain/models';
 import { assertBudgetData } from '../domain/validation';
+import { getToday } from '../domain/date';
+import { calculateBudget } from '../domain/budget/calculateBudget';
+import { calculateBudgetCycle } from '../domain/budget/calculateBudgetCycle';
 import { BudgetDataLoadError, type BudgetRepository } from '../repositories/BudgetRepository';
 
 type Collection = 'expenses' | 'fixedExpenses' | 'savingsGoals';
@@ -40,11 +43,16 @@ export class BudgetStore {
     this.listeners.forEach(listener => listener());
   }
 
+  private validateData(data: BudgetData) {
+    assertBudgetData(data);
+    calculateBudget({ ...data, cycle: calculateBudgetCycle(getToday(), data.salary.payday) });
+  }
+
   initialize = (): Promise<void> => {
     this.initialization ??= this.repository.get().then(data => {
       if (data) {
         try {
-          assertBudgetData(data);
+          this.validateData(data);
         } catch {
           throw new BudgetDataLoadError(
             'corrupted',
@@ -105,7 +113,7 @@ export class BudgetStore {
       try {
         const next = transform(this.state.data);
         if (next) {
-          assertBudgetData(next);
+          this.validateData(next);
           try { await this.repository.save(next); } catch {
             throw new Error('저장하지 못했어요. 저장 공간을 확인한 뒤 다시 시도해 주세요. 입력한 내용은 그대로 있어요.');
           }
