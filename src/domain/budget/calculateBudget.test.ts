@@ -130,4 +130,29 @@ describe('calculateBudget', () => {
       ),
     ).toThrow(RangeError);
   });
+
+  it('개별 금액이 안전 정수여도 합계가 안전 범위를 넘으면 예외를 던진다', () => {
+    const max = Number.MAX_SAFE_INTEGER;
+    expect(() => calculateBudget(createInput({
+      fixedExpenses: [
+        { id: 'a', name: 'A', amount: max, dueDay: 1, isActive: true },
+        { id: 'b', name: 'B', amount: 1, dueDay: 1, isActive: true },
+      ],
+      savingsGoals: [],
+      expenses: [],
+    }))).toThrow(RangeError);
+
+    expect(() => calculateBudget(createInput({
+      fixedExpenses: [{ id: 'a', name: 'A', amount: max, dueDay: 1, isActive: true }],
+      savingsGoals: [{
+        id: 'goal',
+        name: '저축',
+        targetAmount: 0,
+        currentAmount: 0,
+        monthlyContributionAmount: 1,
+        isActive: true,
+      }],
+      expenses: [],
+    }))).toThrow(RangeError);
+  });
 });
