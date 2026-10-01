@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { BudgetStore } from './BudgetStore';
 import { LocalStorageBudgetRepository } from '../repositories/LocalStorageBudgetRepository';
-import type { BudgetRepository } from '../repositories/BudgetRepository';
+import { BudgetDataLoadError, type BudgetRepository } from '../repositories/BudgetRepository';
 import type { BudgetData } from '../domain/models';
 import { calculateBudget } from '../domain/budget/calculateBudget';
 import { calculateBudgetCycle } from '../domain/budget/calculateBudgetCycle';
@@ -102,11 +102,36 @@ describe('BudgetStore 실제 데이터 흐름', () => {
     const store = new BudgetStore(repository);
     await store.initialize();
     expect(store.getSnapshot().loadError).toBeTruthy();
+    expect(store.getSnapshot().loadErrorKind).toBe('storage');
     await expect(store.setup(salary)).rejects.toThrow();
     expect(repository.save).not.toHaveBeenCalled();
     await store.retryLoad();
     await store.setup(salary);
     expect(store.getSnapshot().loadError).toBeNull();
+  });
+  it('손상 저장 데이터는 자동 덮어쓰지 않고 명시적 삭제 후에만 새로 시작한다', async () => {
+    const save = vi.fn<BudgetRepository['save']>();
+    const clear = vi.fn<BudgetRepository['clear']>().mockResolvedValue();
+    const repository: BudgetRepository = {
+      get: vi.fn().mockRejectedValue(new BudgetDataLoadError('corrupted', '저장 데이터가 손상됐어요.')),
+      save,
+      clear,
+    };
+    const store = new BudgetStore(repository);
+    await store.initialize();
+
+    expect(store.getSnapshot().data).toBeNull();
+    expect(store.getSnapshot().loadErrorKind).toBe('data');
+    await expect(store.setup(salary)).rejects.toThrow('저장 데이터가 손상됐어요.');
+    expect(save).not.toHaveBeenCalled();
+
+    await store.discardUnreadableData();
+    expect(clear).toHaveBeenCalledTimes(1);
+    expect(store.getSnapshot().loadError).toBeNull();
+
+    await store.setup(salary);
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(store.getSnapshot().data?.salary).toEqual(salary);
   });
   it('StrictMode에서도 로딩은 한 번이고 변경을 구독자에게 알린다', async () => {
     const repository = createRepository();
@@ -153,5 +178,6 @@ describe('BudgetStore 실제 데이터 흐름', () => {
     const store = new BudgetStore({ get: async () => ({} as BudgetData), save: async () => {}, clear: async () => {} });
     await store.initialize();
     expect(store.getSnapshot().loadError).toBeTruthy();
+    expect(store.getSnapshot().loadErrorKind).toBe('data');
   });
 });
