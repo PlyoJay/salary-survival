@@ -111,7 +111,7 @@ describe('BudgetStore 실제 데이터 흐름', () => {
   });
   it('손상 저장 데이터는 자동 덮어쓰지 않고 명시적 삭제 후에만 새로 시작한다', async () => {
     const save = vi.fn<BudgetRepository['save']>();
-    const clear = vi.fn<BudgetRepository['clear']>().mockResolvedValue();
+    const clear = vi.fn<BudgetRepository['clear']>().mockResolvedValue(undefined);
     const repository: BudgetRepository = {
       get: vi.fn().mockRejectedValue(new BudgetDataLoadError('corrupted', '저장 데이터가 손상됐어요.')),
       save,
