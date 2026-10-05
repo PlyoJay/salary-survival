@@ -51,6 +51,14 @@ describe('countRemainingDays', () => {
 });
 
 describe('calculateBudget', () => {
+  it('주기 시작일 지출은 포함하고 이전 주기와 미래 지출은 제외한다', () => {
+    const result = calculateBudget(createInput({ expenses: [
+      { id: 'start', amount: 1000, category: 'other', occurredOn: '2026-09-25' },
+      { id: 'before', amount: 2000, category: 'other', occurredOn: '2026-09-24' },
+      { id: 'future', amount: 3000, category: 'other', occurredOn: '2026-09-30' },
+    ] }));
+    expect(result.spentAmount).toBe(1000);
+  });
   it('월급에서 활성 고정지출, 저축액, 현재 주기의 지출을 뺀 뒤 일 예산을 계산한다', () => {
     expect(calculateBudget(createInput())).toEqual({
       incomeAmount: 3_000_000,
@@ -121,5 +129,54 @@ describe('calculateBudget', () => {
         }),
       ),
     ).toThrow(RangeError);
+  });
+
+  it('개별 금액이 안전 정수여도 합계가 안전 범위를 넘으면 예외를 던진다', () => {
+    const max = Number.MAX_SAFE_INTEGER;
+    expect(() => calculateBudget(createInput({
+      fixedExpenses: [
+        { id: 'a', name: 'A', amount: max, dueDay: 1, isActive: true },
+        { id: 'b', name: 'B', amount: 1, dueDay: 1, isActive: true },
+      ],
+      savingsGoals: [],
+      expenses: [],
+    }))).toThrow(RangeError);
+
+    expect(() => calculateBudget(createInput({
+      fixedExpenses: [{ id: 'a', name: 'A', amount: max, dueDay: 1, isActive: true }],
+      savingsGoals: [{
+        id: 'goal',
+        name: '저축',
+        targetAmount: 0,
+        currentAmount: 0,
+        monthlyContributionAmount: 1,
+        isActive: true,
+      }],
+      expenses: [],
+    }))).toThrow(RangeError);
+  });
+  it('월 저축 합계와 현재 주기 지출 합계의 오버플로를 거부한다', () => {
+    expect(() => calculateBudget(createInput({
+      fixedExpenses: [], expenses: [],
+      savingsGoals: [Number.MAX_SAFE_INTEGER, 1].map((amount, index) => ({
+        id: String(index), name: '저축', targetAmount: 0, currentAmount: 0,
+        monthlyContributionAmount: amount, isActive: true,
+      })),
+    }))).toThrow(RangeError);
+    expect(() => calculateBudget(createInput({
+      fixedExpenses: [], savingsGoals: [],
+      expenses: [Number.MAX_SAFE_INTEGER, 1].map((amount, index) => ({
+        id: String(index), amount, category: 'food', occurredOn: '2026-09-29',
+      })),
+    }))).toThrow(RangeError);
+  });
+  it('안전 정수 상한 자체는 정상 계산한다', () => {
+    const result = calculateBudget(createInput({
+      salary: { monthlyNetAmount: Number.MAX_SAFE_INTEGER, payday: 25 },
+      fixedExpenses: [{ id: 'max', name: '상한', amount: Number.MAX_SAFE_INTEGER, dueDay: 1, isActive: true }],
+      savingsGoals: [], expenses: [],
+    }));
+    expect(result.remainingAmount).toBe(0);
+    expect(result.dailyAvailableAmount).toBe(0);
   });
 });

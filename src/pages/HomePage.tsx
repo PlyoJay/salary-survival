@@ -1,13 +1,13 @@
 import { Button } from '@toss/tds-mobile';
 import { useNavigate } from 'react-router-dom';
 
-import { demoBudgetCycle, demoBudgetData } from '../data/demoBudgetData';
-import { calculateBudget } from '../domain/budget/calculateBudget';
+import { useBudget } from '../app/BudgetProvider';
 import { formatShortDate, formatWon } from '../shared/format';
 
 export function HomePage() {
   const navigate = useNavigate();
-  const budget = calculateBudget({ ...demoBudgetData, cycle: demoBudgetCycle });
+  const { budget, cycle } = useBudget();
+  if (!budget || !cycle) return null;
 
   return (
     <div className="page home-page">
@@ -16,7 +16,6 @@ export function HomePage() {
           <p className="eyebrow">월급생존기</p>
           <h1>오늘은 이만큼 써도 괜찮아요</h1>
         </div>
-        <span className="demo-badge">예시 데이터</span>
       </header>
 
       <section className="daily-budget-card" aria-labelledby="daily-budget-title">
@@ -25,9 +24,10 @@ export function HomePage() {
         </p>
         <strong className="daily-budget-card__amount">{formatWon(budget.dailyAvailableAmount)}</strong>
         <p className="daily-budget-card__caption">
-          {formatShortDate(demoBudgetCycle.nextPayday)}까지 {budget.remainingDays}일 남았어요
+          다음 월급날 {formatShortDate(cycle.nextPayday)}까지 {budget.remainingDays}일 남았어요
         </p>
       </section>
+      {budget.deficitAmount > 0 && <p className="budget-warning" role="status">이번 주기 예산이 {formatWon(budget.deficitAmount)} 부족해요. 지출과 예산 설정을 확인해 주세요.</p>}
 
       <section className="section-card quick-action-card" aria-labelledby="quick-action-title">
         <div>
@@ -41,7 +41,7 @@ export function HomePage() {
       <section className="section" aria-labelledby="budget-summary-title">
         <div className="section-heading">
           <h2 id="budget-summary-title">이번 월급 사용 현황</h2>
-          <span>{formatWon(budget.remainingAmount)} 남음</span>
+          <span>{budget.remainingAmount < 0 ? `${formatWon(budget.deficitAmount)} 부족` : `${formatWon(budget.remainingAmount)} 남음`}</span>
         </div>
         <div className="summary-grid">
           <SummaryItem label="월급" value={budget.incomeAmount} />
