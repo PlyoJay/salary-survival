@@ -199,11 +199,57 @@ describe('BudgetStore 실제 데이터 흐름', () => {
     const repository = createRepository();
     const data = { salary, fixedExpenses: [{ ...fixed, amount: Number.MAX_SAFE_INTEGER }], savingsGoals: [{ ...goal, monthlyContributionAmount: 1 }], expenses: [] };
     await repository.save(data);
+    const clear = vi.spyOn(repository, 'clear');
     const store = new BudgetStore(repository);
     await store.initialize();
     expect(store.getSnapshot().loadErrorKind).toBe('data');
     await expect(store.setup(salary)).rejects.toThrow();
     expect(await repository.get()).toEqual(data);
+    expect(clear).not.toHaveBeenCalled();
+  });
+  it.each([new TypeError('unexpected bug'), new Error('unexpected runtime error')])('%s를 데이터 손상으로 오판하거나 정상 데이터를 삭제하지 않는다', async cause => {
+    const repository = createRepository();
+    const data = { salary, fixedExpenses: [], savingsGoals: [], expenses: [] };
+    await repository.save(data);
+    const clear = vi.spyOn(repository, 'clear');
+    const save = vi.spyOn(repository, 'save');
+    const calculation = await import('../domain/budget/calculateBudget');
+    const calculate = vi.spyOn(calculation, 'calculateBudget').mockImplementationOnce(() => { throw cause; });
+    try {
+      const store = new BudgetStore(repository);
+      await store.initialize();
+      expect(calculate).toHaveBeenCalledTimes(1);
+      expect(store.getSnapshot().loadError).toBeTruthy();
+      expect(store.getSnapshot().loadErrorKind).toBe('storage');
+      expect(store.getSnapshot().loadErrorKind).not.toBe('data');
+      await expect(store.discardUnreadableData()).rejects.toThrow('삭제할 수 없는 상태');
+      await expect(store.setup(salary)).rejects.toThrow();
+      expect(clear).not.toHaveBeenCalled();
+      expect(save).not.toHaveBeenCalled();
+      expect(await repository.get()).toEqual(data);
+      await store.retryLoad();
+      expect(store.getSnapshot().data).toEqual(data);
+      expect(store.getSnapshot().loadError).toBeNull();
+    } finally {
+      calculate.mockRestore();
+    }
+  });
+  it('검증 과정에서 이미 분류된 데이터 로드 오류의 메시지를 유지한다', async () => {
+    const repository = createRepository();
+    await repository.save({ salary, fixedExpenses: [], savingsGoals: [], expenses: [] });
+    const clear = vi.spyOn(repository, 'clear');
+    const cause = new BudgetDataLoadError('unsupported-version', '분류된 데이터 로드 오류');
+    const calculation = await import('../domain/budget/calculateBudget');
+    const calculate = vi.spyOn(calculation, 'calculateBudget').mockImplementationOnce(() => { throw cause; });
+    try {
+      const store = new BudgetStore(repository);
+      await store.initialize();
+      expect(store.getSnapshot().loadErrorKind).toBe('data');
+      expect(store.getSnapshot().loadError).toBe(cause.message);
+      expect(clear).not.toHaveBeenCalled();
+    } finally {
+      calculate.mockRestore();
+    }
   });
   it('읽을 수 없는 데이터의 삭제 실패는 오류 상태와 원본을 유지하고 재시도할 수 있다', async () => {
     const values = new Map([['test', '{broken']]);

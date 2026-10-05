@@ -53,11 +53,14 @@ export class BudgetStore {
       if (data) {
         try {
           this.validateData(data);
-        } catch {
-          throw new BudgetDataLoadError(
-            'corrupted',
-            '저장된 예산 데이터 형식이 올바르지 않아요. 다시 불러오거나 저장 데이터를 삭제하고 새로 시작해 주세요.',
-          );
+        } catch (cause) {
+          if (cause instanceof RangeError) {
+            throw new BudgetDataLoadError(
+              'corrupted',
+              '저장된 예산 데이터 형식이 올바르지 않아요. 다시 불러오거나 저장 데이터를 삭제하고 새로 시작해 주세요.',
+            );
+          }
+          throw cause;
         }
       }
       this.publish({ data, loading: false, loadError: null, loadErrorKind: null });
