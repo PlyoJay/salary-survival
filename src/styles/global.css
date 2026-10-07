@@ -304,6 +304,16 @@ p {
   font: inherit;
 }
 
+.expenses-page .select-field {
+  /* Match the horizontal inset of the TDS TextField label and box wrappers. */
+  min-width: 0;
+  padding-inline: 20px;
+}
+
+.expenses-page .select-field > span {
+  padding-inline: 4px;
+}
+
 .form-actions {
   display: grid;
   gap: 10px;
@@ -341,6 +351,39 @@ p {
 .row-actions button { min-height: 44px; }
 .editable-row { border-bottom: 1px solid var(--grey-100); }
 .editable-row .expense-row { border: 0; }
+
+.expenses-page .row-actions:has(> .delete-confirmation) > button {
+  display: none;
+}
+
+.expenses-page .delete-confirmation {
+  flex: 1;
+  min-width: 0;
+}
+
+.expenses-page .delete-confirmation > span {
+  display: -webkit-box;
+  flex: 1;
+  min-width: 0;
+  width: auto;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.expenses-page .delete-confirmation > button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.expenses-page .delete-confirmation > .form-error {
+  order: 1;
+  flex-basis: 100%;
+}
+
 .managed-item { padding-top: 16px; border-bottom: 1px solid var(--grey-100); }
 .managed-item__heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 18px 12px; }
 .managed-item__heading > div { min-width: 0; overflow-wrap: anywhere; }

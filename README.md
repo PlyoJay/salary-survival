@@ -51,7 +51,7 @@ pnpm build
 
 ## 앱인토스 콘솔 연결
 
-`apps-in-toss.config.ts`의 `appName`은 현재 `salary-survival`로 설정되어 있습니다. 콘솔에서 앱을 만든 뒤 실제 콘솔 `appName`과 동일하게 변경해야 합니다.
+`apps-in-toss.config.ts`의 `appName`은 실제 콘솔에서 확정된 `salary-survival-plyo`로 설정되어 있습니다. `brand.primaryColor`는 `#3182F6`, 저장 키는 사용자 데이터 호환성을 위해 기존 `salary-survival:budget:v1`을 유지합니다.
 
 1. 앱인토스 콘솔에서 미니앱을 생성합니다.
 2. `apps-in-toss.config.ts`의 `appName`과 `brand.primaryColor`를 콘솔 값에 맞춥니다.
@@ -139,6 +139,18 @@ src/
 - 입력 라벨, 오류 `role="alert"`, 성공 `role="status"`, 통계 progressbar의 ARIA를 검토했습니다. 정상 진입·사용·새로고침 및 복구 시나리오에서 콘솔 오류/경고 없음. 개발 중 HMR로 발생한 일시적 Context 오류는 전체 페이지 로드 후 재현되지 않았습니다.
 - TDS/SDK를 포함한 JS 청크는 1,319.43KB (gzip 422.98KB, 2026-10-05 빌드)이며 Vite의 크기 경고가 남아 있습니다. 실제 WebView의 초기 로딩 성능과 코드 분할은 출시 전 확인합니다.
 - 최종 상태: **Phase 2 main 병합 가능**. 이번 검증에서는 PR 생성과 main 병합을 수행하지 않았습니다.
+
+## 최신 main 출시 전 준비 기록 (2026-10-06)
+
+`main`의 `d8d5224`에서 작업 시작 시 working tree clean을 확인하고, `pnpm test` 84개 테스트와 `pnpm run build:web`, `pnpm build`를 다시 실행해 모두 통과했습니다. `salary-survival.ait` 생성 완료이며 앱 설정·구현 코드·SDK 버전은 변경하지 않았습니다.
+
+콘솔의 실제 appName/브랜드 색상, 기기·OS·Toss 앱 버전과 QR은 아직 미확인입니다. 실제 WebView 테스트는 미검증으로 남겼습니다. [검증 기록과 기기별 체크리스트](docs/toss-webview-verification.md)에 현재 설정, 번들 식별 정보, 주요 기능 후보, 출시 전 테스트 링크 절차와 결과표를 정리했습니다. 코드·빌드 준비는 완료했으며 출시 검토 판단은 실기기 확인 후 진행합니다.
+
+## 콘솔 appName 반영 검증 (2026-10-07)
+
+현재 `appName`은 콘솔에서 확정한 `salary-survival-plyo`입니다. `brand.primaryColor` (`#3182F6`), `webBundleDir` (`dist`), SDK 버전, 라우팅, 저장 키 (`salary-survival:budget:v1`)는 이번 작업에서 변경하지 않았습니다.
+
+`pnpm test` (5개 파일, 84개 테스트), `pnpm run build:web`, `pnpm build`를 순서대로 실행해 모두 성공했습니다. 새 번들은 `salary-survival-plyo.ait`이며 생성·수정 시각은 2026-10-07 21:15:40 (Asia/Seoul)입니다. 기존 `salary-survival.ait`와 이전 검증 기록은 보존했습니다. Vite의 500KB 초과 청크 경고는 유지되며, 이번 작업에서 별도 브랜치 생성이나 main 병합은 수행하지 않았습니다.
 
 ## 공식 자료
 

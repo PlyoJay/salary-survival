@@ -24,7 +24,7 @@ export function ExpensesPage() {
     formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     formRef.current?.querySelector('input')?.focus({ preventScroll: true });
   };
-  return <div className="page">
+  return <div className="page expenses-page">
     <header className="page-header">
       <div>
         <p className="eyebrow">지출내역</p>
@@ -43,7 +43,7 @@ export function ExpensesPage() {
     }}>
       <h2>{editing ? '지출 수정' : '지출 추가'}</h2>
       <Field variant="box" label="지출 금액 (원)" inputMode="numeric" value={amount} onChange={e => setAmount(e.target.value)} placeholder="예: 12000" />
-      <label className="select-field">카테고리<select value={category} onChange={e => setCategory(e.target.value as ExpenseCategory)}>{Object.entries(categoryLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+      <label className="select-field"><span>카테고리</span><select value={category} onChange={e => setCategory(e.target.value as ExpenseCategory)}>{Object.entries(categoryLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
       </label>
       <Field variant="box" label="지출 날짜" type="date" value={date} max={today} onChange={e => setDate(e.target.value)} />
       <Field variant="box" label="메모 (선택)" value={memo} maxLength={200} onChange={e => setMemo(e.target.value)} placeholder="예: 점심" />
