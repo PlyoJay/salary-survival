@@ -4,10 +4,12 @@ import { getToday } from '../domain/date';
 import { calculateBudget } from '../domain/budget/calculateBudget';
 import { calculateBudgetCycle } from '../domain/budget/calculateBudgetCycle';
 import { BudgetDataLoadError, type BudgetRepository } from '../repositories/BudgetRepository';
+import type { BudgetEvent, BudgetEventTracker } from '../analytics/budgetAnalytics';
 
 type Collection = 'expenses' | 'fixedExpenses' | 'savingsGoals';
 type CollectionItem<K extends Collection> = BudgetData[K][number];
 type LoadErrorKind = 'storage' | 'data';
+type ChangeEvent = (previous: BudgetData | null) => BudgetEvent | undefined;
 
 export interface BudgetState {
   data: BudgetData | null;
@@ -30,7 +32,10 @@ export class BudgetStore {
   private initialization?: Promise<void>;
   private queue: Promise<void> = Promise.resolve();
 
-  constructor(private readonly repository: BudgetRepository) { }
+  constructor(
+    private readonly repository: BudgetRepository,
+    private readonly trackEvent: BudgetEventTracker = () => undefined,
+  ) { }
 
   getSnapshot = () => this.state;
   subscribe = (listener: () => void) => {
@@ -108,13 +113,15 @@ export class BudgetStore {
     }
   };
 
-  private commit(transform: (data: BudgetData | null) => BudgetData | null): Promise<void> {
+  private commit(transform: (data: BudgetData | null) => BudgetData | null, eventForChange?: ChangeEvent): Promise<void> {
     const operation = this.queue.then(async () => {
       await this.initialize();
       if (this.state.loadError) throw new Error(this.state.loadError);
       this.publish({ saving: true });
+      let event: BudgetEvent | undefined;
       try {
-        const next = transform(this.state.data);
+        const previous = this.state.data;
+        const next = transform(previous);
         if (next) {
           this.validateData(next);
           try { await this.repository.save(next); } catch {
@@ -125,9 +132,16 @@ export class BudgetStore {
             throw new Error('초기화하지 못했어요. 저장 공간 접근을 확인한 뒤 다시 시도해 주세요.');
           }
         }
+        event = eventForChange?.(previous);
         this.publish({ data: next });
       } finally {
         this.publish({ saving: false });
+      }
+      const completedEvent = event;
+      if (completedEvent) {
+        // SDK를 기다리지 않습니다. 동기 예외, 비동기 거절, 미지원 환경을 모두 격리합니다.
+        // 재시도 없이 저장 성공 1건에 1회만 호출합니다.
+        void Promise.resolve().then(() => this.trackEvent(completedEvent)).catch(() => undefined);
       }
     });
     this.queue = operation.catch(() => undefined);
@@ -148,26 +162,35 @@ export class BudgetStore {
       salary, fixedExpenses: [], expenses: [],
       savingsGoals: monthlySavings > 0 ? [{ id: createId(), name: '월 저축', targetAmount: 0, currentAmount: 0, monthlyContributionAmount: monthlySavings, isActive: true }] : [],
     };
-  });
+  }, () => 'salary_setup_completed');
   updateSalary = (salary: SalaryProfile) => this.commit(data => ({ ...this.requireData(data), salary }));
   reset = () => this.commit(() => null);
 
-  private upsert<K extends Collection>(key: K, item: CollectionItem<K>) {
+  private upsert<K extends Collection>(key: K, item: CollectionItem<K>, eventForChange?: ChangeEvent) {
     return this.commit(data => {
       const current = this.requireData(data);
       const items = current[key];
       const exists = items.some(entry => entry.id === item.id);
       return { ...current, [key]: exists ? items.map(entry => entry.id === item.id ? item : entry) : [...items, item] };
-    });
+    }, eventForChange);
   }
-  private remove(key: Collection, id: string) {
+  private remove(key: Collection, id: string, eventForChange?: ChangeEvent) {
     return this.commit(data => {
       const current = this.requireData(data);
       return { ...current, [key]: current[key].filter(item => item.id !== id) };
-    });
+    }, eventForChange);
   }
-  saveExpense = (expense: Expense) => this.upsert('expenses', expense);
-  deleteExpense = (id: string) => this.remove('expenses', id);
+  saveExpense = (expense: Expense) => this.upsert('expenses', expense, previous => {
+    const existing = previous?.expenses.find(item => item.id === expense.id);
+    if (!existing) return 'expense_added';
+    if (
+      existing.amount !== expense.amount || existing.category !== expense.category ||
+      existing.occurredOn !== expense.occurredOn || (existing.memo ?? '') !== (expense.memo ?? '')
+    ) return 'expense_edited';
+    return undefined;
+  });
+  deleteExpense = (id: string) => this.remove('expenses', id, previous =>
+    previous?.expenses.some(item => item.id === id) ? 'expense_deleted' : undefined);
   saveFixedExpense = (expense: FixedExpense) => this.upsert('fixedExpenses', expense);
   deleteFixedExpense = (id: string) => this.remove('fixedExpenses', id);
   saveSavingsGoal = (goal: SavingsGoal) => this.upsert('savingsGoals', goal);

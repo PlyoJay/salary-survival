@@ -5,11 +5,12 @@ import type { BudgetRepository } from '../repositories/BudgetRepository';
 import { getToday } from '../domain/date';
 import { calculateBudgetCycle } from '../domain/budget/calculateBudgetCycle';
 import { calculateBudget } from '../domain/budget/calculateBudget';
+import { trackBudgetEvent } from '../analytics/budgetAnalytics';
 
 const BudgetContext = createContext<BudgetStore | null>(null);
 
 export function BudgetProvider({ children, repository }: { children: ReactNode; repository?: BudgetRepository; }) {
-  const [store] = useState(() => new BudgetStore(repository ?? new LocalStorageBudgetRepository()));
+  const [store] = useState(() => new BudgetStore(repository ?? new LocalStorageBudgetRepository(), trackBudgetEvent));
   useEffect(() => { void store.initialize(); }, [store]);
   return <BudgetContext.Provider value={store}>{children}</BudgetContext.Provider>;
 }

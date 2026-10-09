@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { BudgetStore } from './BudgetStore';
 import { LocalStorageBudgetRepository } from '../repositories/LocalStorageBudgetRepository';
 import { BudgetDataLoadError, type BudgetRepository } from '../repositories/BudgetRepository';
-import type { BudgetData } from '../domain/models';
+import type { BudgetData, Expense } from '../domain/models';
+import type { BudgetEvent, BudgetEventTracker } from '../analytics/budgetAnalytics';
 import { calculateBudget } from '../domain/budget/calculateBudget';
 import { calculateBudgetCycle } from '../domain/budget/calculateBudgetCycle';
 
@@ -282,5 +283,253 @@ describe('BudgetStore 실제 데이터 흐름', () => {
     await store.retryLoad();
     expect(store.getSnapshot().data?.salary).toEqual(salary);
     expect(store.getSnapshot().loadError).toBeNull();
+  });
+});
+
+describe('BudgetStore 저장 성공 이벤트', () => {
+  const events: BudgetEvent[] = ['salary_setup_completed', 'expense_added', 'expense_edited', 'expense_deleted'];
+
+  async function prepare(event: BudgetEvent, tracker: BudgetEventTracker) {
+    const repository = createRepository();
+    const store = new BudgetStore(repository, tracker);
+    if (event !== 'salary_setup_completed') await store.setup(salary);
+    if (event === 'expense_edited' || event === 'expense_deleted') await store.saveExpense(lunch);
+    const action = () => {
+      switch (event) {
+        case 'salary_setup_completed': return store.setup(salary);
+        case 'expense_added': return store.saveExpense(lunch);
+        case 'expense_edited': return store.saveExpense({ ...lunch, amount: 20_000 });
+        case 'expense_deleted': return store.deleteExpense(lunch.id);
+      }
+    };
+    return { repository, store, action };
+  }
+
+  it('설정·추가·수정·삭제는 각각 성공 후 해당 이름만 1회 전달한다', async () => {
+    const tracker = vi.fn<BudgetEventTracker>();
+    const repository = createRepository();
+    const store = new BudgetStore(repository, tracker);
+    await store.setup(salary);
+    await store.saveExpense(lunch);
+    await store.saveExpense({ ...lunch, amount: 20_000 });
+    await store.deleteExpense(lunch.id);
+    expect(tracker.mock.calls).toEqual(events.map(event => [event]));
+    expect((await repository.get())?.expenses).toEqual([]);
+  });
+
+  it.each(events)('%s는 Repository 저장 완료 전에는 발생하지 않는다', async event => {
+    const tracker = vi.fn<BudgetEventTracker>();
+    const { repository, store, action } = await prepare(event, tracker);
+    tracker.mockClear();
+    const before = store.getSnapshot().data;
+    let complete!: () => void;
+    const originalSave = repository.save.bind(repository);
+    vi.spyOn(repository, 'save').mockImplementationOnce(data => new Promise<void>((resolve, reject) => {
+      complete = () => { void originalSave(data).then(resolve, reject); };
+    }));
+    const operation = action();
+    await vi.waitFor(() => expect(store.getSnapshot().saving).toBe(true));
+    expect(tracker).not.toHaveBeenCalled();
+    expect(store.getSnapshot().data).toBe(before);
+    complete();
+    await operation;
+    expect(tracker).toHaveBeenCalledExactlyOnceWith(event);
+    expect(store.getSnapshot().saving).toBe(false);
+    expect(await repository.get()).toEqual(store.getSnapshot().data);
+  });
+
+  it.each(events)('%s 저장 실패는 원본을 보존하고 재시도 성공 때만 1회 발생한다', async event => {
+    const tracker = vi.fn<BudgetEventTracker>();
+    const { repository, store, action } = await prepare(event, tracker);
+    tracker.mockClear();
+    const before = store.getSnapshot().data;
+    vi.spyOn(repository, 'save').mockRejectedValueOnce(new Error('quota'));
+    await expect(action()).rejects.toThrow('저장하지 못했어요');
+    expect(tracker).not.toHaveBeenCalled();
+    expect(store.getSnapshot().data).toBe(before);
+    expect(await repository.get()).toEqual(before);
+    expect(store.getSnapshot().saving).toBe(false);
+    await action();
+    expect(tracker).toHaveBeenCalledExactlyOnceWith(event);
+  });
+
+  it.each<Partial<Expense>>([
+    { amount: 20_000 }, { category: 'other' }, { occurredOn: '2026-09-29' }, { memo: '변경한 메모' },
+  ])('기존 지출의 각 내용 변경은 수정으로 집계한다: %j', async change => {
+    const tracker = vi.fn<BudgetEventTracker>();
+    const store = new BudgetStore(createRepository(), tracker);
+    await store.setup(salary);
+    await store.saveExpense(lunch);
+    tracker.mockClear();
+    await store.saveExpense({ ...lunch, ...change });
+    expect(tracker).toHaveBeenCalledExactlyOnceWith('expense_edited');
+    expect(store.getSnapshot().data?.expenses).toEqual([{ ...lunch, ...change }]);
+  });
+
+  it('동일 내용·필드 순서 차이·빈 선택 메모는 이벤트를 발생시키지 않는다', async () => {
+    const tracker = vi.fn<BudgetEventTracker>();
+    const store = new BudgetStore(createRepository(), tracker);
+    await store.setup(salary);
+    await store.saveExpense(lunch);
+    tracker.mockClear();
+    await store.saveExpense({ occurredOn: lunch.occurredOn, category: lunch.category, amount: lunch.amount, id: lunch.id });
+    await store.saveExpense({ ...lunch, memo: undefined });
+    await store.saveExpense({ ...lunch, memo: '' });
+    expect(tracker).not.toHaveBeenCalled();
+    expect(store.getSnapshot().data?.expenses).toHaveLength(1);
+  });
+
+  it('큐에 같은 ID를 연속 저장해도 추가는 1회, 실제 변경만 수정으로 발생한다', async () => {
+    const tracker = vi.fn<BudgetEventTracker>();
+    const store = new BudgetStore(createRepository(), tracker);
+    await store.setup(salary);
+    tracker.mockClear();
+    await Promise.all([
+      store.saveExpense(lunch), store.saveExpense({ ...lunch }),
+      store.saveExpense({ ...lunch, amount: 20_000 }), store.saveExpense({ ...lunch, amount: 20_000 }),
+      store.saveExpense({ ...lunch, id: 'coffee' }),
+    ]);
+    expect(tracker.mock.calls).toEqual([['expense_added'], ['expense_edited'], ['expense_added']]);
+    expect(store.getSnapshot().data?.expenses).toHaveLength(2);
+  });
+
+  it('존재하지 않는 지출과 연속 중복 삭제는 추가 삭제 이벤트를 발생시키지 않는다', async () => {
+    const tracker = vi.fn<BudgetEventTracker>();
+    const store = new BudgetStore(createRepository(), tracker);
+    await store.setup(salary);
+    await store.saveExpense(lunch);
+    tracker.mockClear();
+    await store.deleteExpense('missing');
+    await Promise.all([store.deleteExpense(lunch.id), store.deleteExpense(lunch.id)]);
+    expect(tracker).toHaveBeenCalledExactlyOnceWith('expense_deleted');
+    expect(store.getSnapshot().data?.expenses).toEqual([]);
+  });
+
+  it('중복 설정·입력 오류·설정 전 지출 작업에는 이벤트를 발생시키지 않는다', async () => {
+    const tracker = vi.fn<BudgetEventTracker>();
+    const store = new BudgetStore(createRepository(), tracker);
+    await expect(store.saveExpense(lunch)).rejects.toThrow();
+    await expect(store.deleteExpense(lunch.id)).rejects.toThrow();
+    await expect(store.setup({ monthlyNetAmount: 0, payday: 25 })).rejects.toThrow();
+    await expect(store.setup(salary, -1)).rejects.toThrow();
+    expect(tracker).not.toHaveBeenCalled();
+    const setupResults = await Promise.allSettled([store.setup(salary), store.setup(salary)]);
+    expect(setupResults.map(result => result.status)).toEqual(['fulfilled', 'rejected']);
+    expect(tracker).toHaveBeenCalledExactlyOnceWith('salary_setup_completed');
+    tracker.mockClear();
+    await expect(store.saveExpense({ ...lunch, amount: -1 })).rejects.toThrow();
+    expect(tracker).not.toHaveBeenCalled();
+  });
+
+  it('월급 편집·고정지출·저축·초기화는 제외하고 명시적 초기화 후 설정은 새 설정으로 집계한다', async () => {
+    const tracker = vi.fn<BudgetEventTracker>();
+    const store = new BudgetStore(createRepository(), tracker);
+    await store.setup(salary);
+    tracker.mockClear();
+    await store.updateSalary({ ...salary, payday: 31 });
+    await store.saveFixedExpense(fixed);
+    await store.saveFixedExpense({ ...fixed, isActive: false });
+    await store.deleteFixedExpense(fixed.id);
+    await store.saveSavingsGoal(goal);
+    await store.saveSavingsGoal({ ...goal, isActive: false });
+    await store.deleteSavingsGoal(goal.id);
+    await store.reset();
+    expect(tracker).not.toHaveBeenCalled();
+    await store.setup(salary);
+    expect(tracker).toHaveBeenCalledExactlyOnceWith('salary_setup_completed');
+  });
+
+  it.each([
+    ['동기 예외', (): void => { throw new Error('SDK unavailable'); }],
+    ['비동기 실패', (): Promise<void> => Promise.reject(new Error('network failed'))],
+    ['미지원 환경의 무응답', (): void => undefined],
+  ] as const)('Analytics %s가 저장 결과·화면 상태·후속 작업·복원을 바꾸지 않는다', async (_name, send) => {
+    const tracker = vi.fn<BudgetEventTracker>(send);
+    const repository = createRepository();
+    const store = new BudgetStore(repository, tracker);
+    const observed: boolean[] = [];
+    store.subscribe(() => { observed.push(store.getSnapshot().saving); });
+    await store.setup(salary);
+    await store.saveExpense(lunch);
+    await store.saveExpense({ ...lunch, memo: '수정' });
+    expect(store.getSnapshot().data?.expenses).toEqual([{ ...lunch, memo: '수정' }]);
+    await store.deleteExpense(lunch.id);
+    expect(tracker.mock.calls).toEqual(events.map(event => [event]));
+    expect(store.getSnapshot()).toMatchObject({ saving: false, loadError: null, data: { salary, expenses: [] } });
+    expect(observed.at(-1)).toBe(false);
+    const reopened = new BudgetStore(repository, tracker);
+    await reopened.initialize();
+    expect(reopened.getSnapshot().data).toEqual(store.getSnapshot().data);
+    expect(tracker).toHaveBeenCalledTimes(4);
+  });
+
+  it('전송 Promise가 끝나지 않아도 저장과 상태 알림 및 다음 작업은 완료된다', async () => {
+    const tracker = vi.fn<BudgetEventTracker>(() => new Promise<void>(() => {}));
+    const repository = createRepository();
+    const store = new BudgetStore(repository, tracker);
+    const published: BudgetData[] = [];
+    store.subscribe(() => {
+      const snapshot = store.getSnapshot();
+      if (!snapshot.saving && snapshot.data) published.push(snapshot.data);
+    });
+    await store.setup(salary);
+    await store.saveExpense(lunch);
+    expect(published.at(-1)?.expenses).toEqual([lunch]);
+    await store.saveExpense({ ...lunch, amount: 20_000 });
+    expect(published.at(-1)?.expenses[0]?.amount).toBe(20_000);
+    await store.deleteExpense(lunch.id);
+    expect(published.at(-1)?.expenses).toEqual([]);
+    expect(store.getSnapshot().saving).toBe(false);
+    expect(await repository.get()).toEqual(store.getSnapshot().data);
+    expect(tracker.mock.calls).toEqual(events.map(event => [event]));
+  });
+
+  it.each(['version 1', 'Phase 1'] as const)('%s 기존 데이터는 동일 키에서 원문 변경 없이 복원하고 이벤트를 보내지 않는다', async format => {
+    const data: BudgetData = { salary, fixedExpenses: [fixed], savingsGoals: [goal], expenses: [{ ...lunch, memo: '기존 기록' }] };
+    const serialized = JSON.stringify(format === 'version 1' ? { version: 1, data } : data);
+    const key = 'salary-survival:budget:v1';
+    const values = new Map([[key, serialized]]);
+    const storage = {
+      getItem: (storageKey: string) => values.get(storageKey) ?? null,
+      setItem: vi.fn((storageKey: string, value: string) => { values.set(storageKey, value); }),
+      removeItem: vi.fn((storageKey: string) => { values.delete(storageKey); }),
+    };
+    const tracker = vi.fn<BudgetEventTracker>();
+    const store = new BudgetStore(new LocalStorageBudgetRepository(storage), tracker);
+    await Promise.all([store.initialize(), store.initialize()]);
+    await store.retryLoad();
+    expect(store.getSnapshot().data).toEqual(data);
+    expect(values.get(key)).toBe(serialized);
+    expect(storage.setItem).not.toHaveBeenCalled();
+    expect(storage.removeItem).not.toHaveBeenCalled();
+    expect(tracker).not.toHaveBeenCalled();
+
+    const newExpense = { ...lunch, id: 'new-expense' };
+    await store.saveExpense(newExpense);
+    await store.saveExpense({ ...newExpense, amount: 4500 });
+    await store.deleteExpense(newExpense.id);
+    expect(values.size).toBe(1);
+    expect(JSON.parse(values.get(key)!)).toEqual({ version: 1, data });
+    expect(tracker.mock.calls).toEqual([['expense_added'], ['expense_edited'], ['expense_deleted']]);
+    expect(storage.removeItem).not.toHaveBeenCalled();
+    tracker.mockClear();
+    const reopened = new BudgetStore(new LocalStorageBudgetRepository(storage), tracker);
+    await reopened.initialize();
+    expect(reopened.getSnapshot().data).toEqual(data);
+    expect(tracker).not.toHaveBeenCalled();
+  });
+
+  it.each(['{broken', JSON.stringify({ version: 99, data: {} })])('손상·미지원 저장 데이터를 덮어쓰거나 이벤트를 발생시키지 않는다: %s', async serialized => {
+    const setItem = vi.fn();
+    const removeItem = vi.fn();
+    const tracker = vi.fn<BudgetEventTracker>();
+    const store = new BudgetStore(new LocalStorageBudgetRepository({ getItem: () => serialized, setItem, removeItem }), tracker);
+    await store.initialize();
+    await expect(store.setup(salary)).rejects.toThrow();
+    await expect(store.saveExpense(lunch)).rejects.toThrow();
+    expect(store.getSnapshot().loadErrorKind).toBe('data');
+    expect(setItem).not.toHaveBeenCalled();
+    expect(removeItem).not.toHaveBeenCalled();
+    expect(tracker).not.toHaveBeenCalled();
   });
 });
